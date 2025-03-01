@@ -1,3 +1,4 @@
+#include <string.h>
 #include <mcp_canbus.h>
 #include "mbe.h"
 
@@ -15,8 +16,7 @@
 // There's only 256 bytes in a page, so constrain queries to max 256 bytes.
 #define MBE_MAX_QUERY_BYTES (256)
 
-#define MBE_WAIT_STEP_MS (5)
-#define MBE_WAIT_TIMEOUT_MS (200)
+#define MBE_WAIT_TIMEOUT_MS (500)
 
 #define ISOTP_FRAME_SINGLE (0x0)
 #define ISOTP_FRAME_FIRST (0x10)
@@ -33,6 +33,23 @@ static const uint8_t VER_RES_PREFIX[] = { 0xe4, 0x0, 0xd };
 static const uint8_t DATA_REQ_PREFIX[] = { 0x01, 0x0, 0x0, 0x0, 0x0 };
 #define DATA_RES_PREFIX_LEN (1)
 static const uint8_t DATA_RES_PREFIX[] = { 0x81 };
+
+static const char* errors[] = {
+  "MBE_OK",
+  "MBE_UNIMPLEMENTED",
+  "MBE_INIT_TIMEOUT",
+  "MBE_OUT_OF_BOUNDS",
+  "MBE_SEND_ERROR",
+  "MBE_RECV_TIMEOUT",
+  "MBE_RECV_ERROR",
+  "MBE_RECV_INVALID",
+  "MBE_RECV_OUT_OF_SEQ",
+  "MBE_RECV_BAD_HEADER",
+  "MBE_VERSION_INVALID",
+  "MBE_VERSION_OVERFLOW",
+  "MBE_QUERY_TOO_MANY_BYTES",
+  "MBE_QUERY_RESPONSE_INVALID",
+};
 
 mbe_error mbe_send(const uint8_t* msg, size_t len);
 mbe_error mbe_recv();
@@ -150,12 +167,12 @@ mbe_error mbe_send(const uint8_t* msg, const size_t len) {
 
 // Waits until a packet is available to read.
 mbe_error mbe_wait() {
-  uint16_t ms = 0;
-  for (uint16_t ms = 0; ms < MBE_WAIT_TIMEOUT_MS; ms += MBE_WAIT_STEP_MS) {
+  long timeout = millis() + MBE_WAIT_TIMEOUT_MS;
+  while (millis() <= timeout) {
     if (CAN.checkReceive() == CAN_MSGAVAIL) {
       return MBE_OK;
     }
-    delay(MBE_WAIT_STEP_MS);
+    yield();
   }
   return MBE_RECV_TIMEOUT;
 }
@@ -186,22 +203,53 @@ mbe_error mbe_recv() {
   memcpy(mbe_data, &buf[2], received);
 
   uint8_t seq = 1;
+  uint8_t active_bufs = 0;
+  uint8_t lens[8];
+  uint8_t bufs[8][8];
   while (received < total) {
-    err = mbe_wait();
-    if (err != MBE_OK) {
-      return err;
+    // NOTE: The MCP2515 has two receive buffers. Incoming packets will be read
+    // into whichever buffer is available first. However, reads will always pick
+    // RX0 if it has a packet in it, regardless of which packet arrived first.
+    // This means we need to have a bunch of extra code to read everything from
+    // the receive buffers and pick the "next" packet based on the sequence
+    // number.
+
+    // Deque any received packets.
+    if (active_bufs == 0) {
+      err = mbe_wait();
+      if (err != MBE_OK) {
+        return err;
+      }
+      for (int n=0; n<8; n++) {
+        if (CAN.readMsgBuf(&lens[n], bufs[n]) != CAN_OK) {
+          break;
+        }
+        if ((bufs[n][0] & 0xf0) != ISOTP_FRAME_CONSECUTIVE) {
+          return MBE_RECV_BAD_HEADER;
+        }
+        active_bufs |= 1<<n;
+      }
+      if (active_bufs == 0) {
+        return MBE_RECV_ERROR;
+      }
     }
-    if (CAN.readMsgBuf(&len, buf) != CAN_OK) {
-      return MBE_RECV_BAD_HEADER;
+
+    // Find the active buffer that corresponds to the next packet in the
+    // sequence.
+    uint8_t n;
+    for (n=0; n<8; n++) {
+      if ((active_bufs & (1<<n)) > 0 && (bufs[n][0] & 0xf) == seq) {
+        active_bufs &= ~(1<<n);
+        break;
+      }
     }
-    if ((buf[0] & 0xf0) != ISOTP_FRAME_CONSECUTIVE) {
-      return MBE_RECV_BAD_HEADER;
-    }
-    if ((buf[0] & 0xf) != seq) {
+    if (n==8) {
       return MBE_RECV_OUT_OF_SEQ;
     }
-    size_t data_len = min(len - 1, total - received);
-    memcpy(&mbe_data[received], &buf[1], data_len);
+
+    // Process the packet.
+    size_t data_len = min(lens[n] - 1, total - received);
+    memcpy(&mbe_data[received], &bufs[n][1], data_len);
     received += data_len;
     seq = (seq + 1) % 16;
   }
@@ -217,4 +265,8 @@ void mbe_flush() {
     // Delay just in case there's more messages queued.
     delay(10);
   }
+}
+
+const char* mbe_error_text(mbe_error err) {
+  return errors[err];
 }

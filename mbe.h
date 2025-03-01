@@ -1,6 +1,9 @@
 #ifndef _MBE_H_
 #define _MBE_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #define MBE_PIN_CAN_CS (9)
 
 #define MBE_ID_EASIMAP (0xcbe1101)
@@ -57,6 +60,9 @@ mbe_error mbe_query(
     const uint8_t* offsets,
     uint8_t* out_data,
     size_t len);
+
+/** Returns a string corresponding to the provided error enum value. */
+const char* mbe_error_text(mbe_error err);
 
 // private?
 
