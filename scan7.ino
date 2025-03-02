@@ -1,8 +1,7 @@
 #include <Adafruit_SSD1327.h>
+#include "font.h"
 #include "mbe.h"
 #include "poll.h"
-
-#include "Mx437_Amstrad_PC4pt7b.h"
 
 #define OLED_PIN_CS (8)
 #define OLED_PIN_DC (10)
@@ -29,7 +28,7 @@ void setup() {
   OLED.setCursor(8, 20);
   OLED.print("SCAN 7");
   OLED.setCursor(8, 40);
-  OLED.print("olly@olly.xyz");
+  OLED.print("olly" "@olly" ".xyz");
 
   OLED.setCursor(8, 60);
   OLED.print(VERSION);
