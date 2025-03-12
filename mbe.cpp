@@ -301,7 +301,9 @@ void mbe_flush() {
   while (CAN.checkReceive() == CAN_MSGAVAIL) {
     uint8_t len;
     uint8_t buf[8];
-    CAN.readMsgBuf(&len, buf);
+    if (CAN.readMsgBuf(&len, buf) == CAN_OK) {
+      DEBUG_PKT("FLUSH", buf, 8);
+    }
     // Delay just in case there's more messages queued.
     delay(10);
   }
