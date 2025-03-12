@@ -88,6 +88,8 @@ mbe_error mbe_init() {
 
   CAN.init_Mask(0, 1, MBE_ID_ECU);
   CAN.init_Filt(0, 1, MBE_ID_MASK);
+  CAN.init_Mask(1, 1, MBE_ID_ECU);
+  CAN.init_Filt(1, 1, MBE_ID_MASK);
 
   return MBE_OK;
 }
