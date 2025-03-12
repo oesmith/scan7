@@ -20,6 +20,13 @@ void setup() {
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
+#ifdef SCAN7_DEBUG
+  Serial.begin();
+  // Wait for serial monitor connection.
+  delay(2000);
+  Serial.println("Debug ready");
+#endif
+
   OLED.begin();
   OLED.setFont(&Mx437_Amstrad_PC4pt7b);
   OLED.clearDisplay();

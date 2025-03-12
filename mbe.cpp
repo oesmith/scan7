@@ -2,6 +2,22 @@
 #include <mcp_canbus.h>
 #include "mbe.h"
 
+#ifdef SCAN7_DEBUG
+#define DEBUG_PKT(msg, buf, len) ({\
+        Serial.printf(__FILE__ ":%d %s: ", __LINE__, msg);\
+        for (size_t _i=0; _i<len; _i++) {\
+          Serial.printf("%02x ", buf[_i]);\
+        }\
+        Serial.println("");\
+    })
+#define DEBUG_MSG(msg) (Serial.printf(__FILE__ ":%d %s\n", __LINE__, msg))
+#define DEBUG_ERR(code) (DEBUG_MSG(errors[code]))
+#else
+#define DEBUG_PKT(msg, buf, len)
+#define DEBUG_MSG(msg)
+#define DEBUG_ERR(code)
+#endif
+
 #define MBE_INIT_RETRIES (10)
 #define MBE_INIT_RETRY_DELAY_MS (100)
 
@@ -131,7 +147,9 @@ mbe_error mbe_query(
 // *************************************************************************
 
 mbe_error mbe_send(const uint8_t* msg, const size_t len) {
+  DEBUG_MSG("Send start");
   if (len == 0 || len > 4095) {
+    DEBUG_ERR(MBE_OUT_OF_BOUNDS);
     return MBE_OUT_OF_BOUNDS;
   }
   mbe_flush();
@@ -141,15 +159,22 @@ mbe_error mbe_send(const uint8_t* msg, const size_t len) {
     frame[0] = (uint8_t) len;
     memcpy(&frame[1], msg, len);
     if (CAN.sendMsgBuf(MBE_ID_EASIMAP, 1, 8, frame) != CAN_OK) {
+      DEBUG_ERR(MBE_SEND_ERROR);
       return MBE_SEND_ERROR;
     }
+    DEBUG_PKT("SEND", frame, 8);
+    DEBUG_MSG("Send complete");
     return MBE_OK;
   }
   // Multiple frames.
   frame[0] = 0x10 | (uint8_t)(len >> 8);
   frame[1] = (uint8_t)(len & 0xff);
   memcpy(&frame[2], msg, 6);
-  CAN.sendMsgBuf(MBE_ID_EASIMAP, 1, 8, frame);
+  if (CAN.sendMsgBuf(MBE_ID_EASIMAP, 1, 8, frame) != CAN_OK) {
+    DEBUG_ERR(MBE_SEND_ERROR);
+    return MBE_SEND_ERROR;
+  }
+  DEBUG_PKT("SENT", frame, 8);
   size_t offset = 6;
   uint8_t idx = 1;
   while (offset < len) {
@@ -157,11 +182,14 @@ mbe_error mbe_send(const uint8_t* msg, const size_t len) {
     frame[0] = 0x20 | (uint8_t)(idx & 0xf);
     memcpy(&frame[1], &msg[offset], n);
     if (CAN.sendMsgBuf(MBE_ID_EASIMAP, 1, 8, frame) != CAN_OK) {
+      DEBUG_ERR(MBE_SEND_ERROR);
       return MBE_SEND_ERROR;
     }
+    DEBUG_PKT("SENT", frame, 8);
     idx++;
     offset += n;
   }
+  DEBUG_MSG("Send complete");
   return MBE_OK;
 }
 
@@ -178,17 +206,22 @@ mbe_error mbe_wait() {
 }
 
 mbe_error mbe_recv() {
+  DEBUG_MSG("Receive start");
   // Read the first packet.
   mbe_error err = mbe_wait();
   if (err != MBE_OK) {
+    DEBUG_ERR(err);
     return err;
   }
   uint8_t len;
   uint8_t buf[8];
   if (CAN.readMsgBuf(&len, buf) != CAN_OK) {
+    DEBUG_ERR(MBE_RECV_ERROR);
     return MBE_RECV_ERROR;
   }
+  DEBUG_PKT("RECV", buf, 8);
   if (len < 2) {
+    DEBUG_ERR(MBE_RECV_INVALID);
     return MBE_RECV_INVALID;
   }
   uint8_t type = buf[0] & 0xf0;
@@ -196,6 +229,7 @@ mbe_error mbe_recv() {
     mbe_data_len = buf[0] & 0x7;
     memcpy(mbe_data, &buf[1], mbe_data_len);
   } else if (type != ISOTP_FRAME_FIRST) {
+    DEBUG_ERR(MBE_RECV_BAD_HEADER);
     return MBE_RECV_BAD_HEADER;
   }
   size_t total = (((size_t)buf[0] & 0xf) << 8) + buf[1];
@@ -218,18 +252,22 @@ mbe_error mbe_recv() {
     if (active_bufs == 0) {
       err = mbe_wait();
       if (err != MBE_OK) {
+        DEBUG_ERR(err);
         return err;
       }
       for (int n=0; n<8; n++) {
         if (CAN.readMsgBuf(&lens[n], bufs[n]) != CAN_OK) {
           break;
         }
+        DEBUG_PKT("RECV", bufs[n], 8);
         if ((bufs[n][0] & 0xf0) != ISOTP_FRAME_CONSECUTIVE) {
+          DEBUG_ERR(MBE_RECV_BAD_HEADER);
           return MBE_RECV_BAD_HEADER;
         }
         active_bufs |= 1<<n;
       }
       if (active_bufs == 0) {
+        DEBUG_ERR(MBE_RECV_ERROR);
         return MBE_RECV_ERROR;
       }
     }
@@ -244,6 +282,7 @@ mbe_error mbe_recv() {
       }
     }
     if (n==8) {
+      DEBUG_ERR(MBE_RECV_OUT_OF_SEQ);
       return MBE_RECV_OUT_OF_SEQ;
     }
 
@@ -254,6 +293,7 @@ mbe_error mbe_recv() {
     seq = (seq + 1) % 16;
   }
   mbe_data_len = received;
+  DEBUG_MSG("Receive complete");
   return MBE_OK;
 }
 
